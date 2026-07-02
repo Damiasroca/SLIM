@@ -60,7 +60,10 @@ if (-not $SkipPython) {
         }
         
         pyinstaller StenaInternetMonitor.spec --noconfirm
-        
+        if ($LASTEXITCODE -ne 0) {
+            throw "pyinstaller failed with exit code $LASTEXITCODE"
+        }
+
         $ExeSrc = "dist\SLIM.exe"
         $ExeDst = "$ReleasesDir\SLIM-v$Version-windows.exe"
         
@@ -90,7 +93,13 @@ if (-not $SkipMaui) {
     Push-Location "$RepoRoot\maui"
     try {
         dotnet publish -f net8.0-android -c Release
-        
+        if ($LASTEXITCODE -ne 0) {
+            # Fail loudly instead of falling through and copying a stale
+            # APK from a previous successful build (would then get shipped
+            # under the new version -- happened once, don't repeat).
+            throw "dotnet publish failed with exit code $LASTEXITCODE"
+        }
+
         # Find the signed APK
         $ApkPattern = "bin\Release\net8.0-android\publish\*-Signed.apk"
         $ApkSrc = Get-ChildItem $ApkPattern -ErrorAction SilentlyContinue | Select-Object -First 1
