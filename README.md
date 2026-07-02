@@ -1,4 +1,4 @@
-# KERRY the FERRY — Internet Monitor
+# Stena Line — Internet Monitor
 
 Companion tools for the **Stena Line** onboard captive-portal Wi-Fi: monitor
 your data quota, save login profiles, log connection quality, and connect/
