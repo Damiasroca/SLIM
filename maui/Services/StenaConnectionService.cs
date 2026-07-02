@@ -8,6 +8,7 @@ namespace KerryInternetMonitor.Services
     public class StenaConnectionService
     {
         private readonly HttpClient _httpClient;
+        private readonly CookieContainer _cookies;
         private readonly string _apiUrl = "https://internet.stenaline.com/portal_api.php";
 
         // Landing page used to replicate the UCOPIA captive-portal handshake.
@@ -19,6 +20,10 @@ namespace KerryInternetMonitor.Services
         // Cold start needs at least two GETs (degraded sets the cookie, then the
         // zoned /<zone>/portal/ loads); extra margin covers a dropped SYN.
         private const int PortalHandshakeAttempts = 3;
+        // Max Location hops we follow per handshake attempt. UCOPIA typically
+        // does 1-2 (`/` -> `portal_degraded.php` -> `/<zone>/portal/`); 6 is a
+        // safe ceiling that also traps redirect loops.
+        private const int PortalRedirectHops = 6;
         private static readonly TimeSpan PortalRequestTimeout = TimeSpan.FromSeconds(30);
 
         private bool _portalSessionReady;
@@ -29,15 +34,22 @@ namespace KerryInternetMonitor.Services
 
         public StenaConnectionService()
         {
-            // Shared CookieContainer mirrors the Python `requests.Session()` so
-            // cookies set by the handshake are carried into subsequent calls.
-            // AllowAutoRedirect stays on so the handshake GET follows the gateway
-            // redirects all the way to /<zone>/portal/.
+            _cookies = new CookieContainer();
+            // AllowAutoRedirect is OFF on purpose. On Android the default
+            // HttpClientHandler is AndroidMessageHandler, which (when auto-
+            // following redirects) drops Set-Cookie headers coming from
+            // intermediate 302 responses (dotnet/android#5587). UCOPIA rotates
+            // PHPSESSID on nearly every hop, so losing those cookies leaves
+            // the session unbound and portal_api.php then serves the login
+            // HTML instead of JSON ("session not bound") on every call after
+            // the first. Following redirects by hand below lets every hop's
+            // Set-Cookie land in CookieContainer, matching how
+            // requests.Session() behaves in the Python client.
             HttpClientHandler handler = new HttpClientHandler
             {
-                CookieContainer = new CookieContainer(),
+                CookieContainer = _cookies,
                 UseCookies = true,
-                AllowAutoRedirect = true,
+                AllowAutoRedirect = false,
                 ServerCertificateCustomValidationCallback = (message, cert, chain, errors) => true
             };
 
@@ -45,6 +57,32 @@ namespace KerryInternetMonitor.Services
             _httpClient.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1");
             _httpClient.DefaultRequestHeaders.Add("X-Requested-With", "XMLHttpRequest");
             _httpClient.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+        }
+
+        /// <summary>
+        /// Expire every cookie we hold for the portal host. Called before a
+        /// forced re-handshake after we detect an unbound session, so a
+        /// stale/rotated PHPSESSID can't leak into the retry -- which is what
+        /// used to make the Android app require an app restart to recover.
+        /// </summary>
+        private void ClearPortalCookies()
+        {
+            foreach (Cookie c in _cookies.GetCookies(new Uri(PortalLandingUrl)))
+            {
+                c.Expired = true;
+            }
+        }
+
+        /// <summary>
+        /// Response is "unbound" if the portal is telling us to log in again:
+        /// either a 3xx to the portal page (session lost) or a 200 with the
+        /// portal HTML body (Ucopia's other way of saying the same thing).
+        /// </summary>
+        private static bool IsUnboundResponse(HttpResponseMessage response, string body)
+        {
+            int code = (int)response.StatusCode;
+            if (code >= 300 && code < 400) return true;
+            return LooksLikeHtml(response, body);
         }
 
         /// <summary>
@@ -72,21 +110,42 @@ namespace KerryInternetMonitor.Services
             {
                 try
                 {
-                    using var cts = new CancellationTokenSource(PortalRequestTimeout);
-                    HttpResponseMessage resp = await _httpClient.GetAsync(PortalLandingUrl, cts.Token);
-                    string finalUrl = resp.RequestMessage?.RequestUri?.ToString() ?? string.Empty;
-                    PortalUrl = finalUrl;
-
-                    Match match = Regex.Match(finalUrl, @"/(\d+)/portal/");
-                    if (match.Success)
+                    Uri current = new Uri(PortalLandingUrl);
+                    for (int hop = 0; hop < PortalRedirectHops; hop++)
                     {
-                        // Reached the zoned portal -> session is ready.
-                        PortalSiteId = match.Groups[1].Value;
-                        _portalSessionReady = true;
-                        return true;
+                        using var cts = new CancellationTokenSource(PortalRequestTimeout);
+                        using HttpResponseMessage resp = await _httpClient.GetAsync(current, cts.Token);
+                        PortalUrl = current.ToString();
+
+                        int code = (int)resp.StatusCode;
+                        if (code >= 300 && code < 400 && resp.Headers.Location != null)
+                        {
+                            // Set-Cookie on this 302 was already parsed into
+                            // CookieContainer by the handler because we're
+                            // NOT auto-following. Resolve the next hop and
+                            // continue -- the next GET will send the freshly
+                            // rotated PHPSESSID.
+                            current = resp.Headers.Location.IsAbsoluteUri
+                                ? resp.Headers.Location
+                                : new Uri(current, resp.Headers.Location);
+                            continue;
+                        }
+
+                        Match match = Regex.Match(current.ToString(), @"/(\d+)/portal/");
+                        if (match.Success)
+                        {
+                            // Reached the zoned portal -> session is ready.
+                            PortalSiteId = match.Groups[1].Value;
+                            _portalSessionReady = true;
+                            return true;
+                        }
+                        // Non-redirect page that isn't /<zone>/portal/
+                        // (probably portal_degraded). Break out of the hop
+                        // loop and let the outer attempt loop retry -- the
+                        // cookie is now set, so the next full attempt should
+                        // land on the zoned URL.
+                        break;
                     }
-                    // Landed on degraded/unzoned page; cookie is now set, so loop
-                    // again to let the next GET reach /<zone>/portal/.
                 }
                 catch (Exception ex) when (ex is HttpRequestException || ex is TaskCanceledException || ex is OperationCanceledException)
                 {
@@ -157,9 +216,9 @@ namespace KerryInternetMonitor.Services
                 };
                 using var cts = new CancellationTokenSource(PortalRequestTimeout);
                 using var content = new FormUrlEncodedContent(fields);
-                HttpResponseMessage resp = await _httpClient.PostAsync(_apiUrl, content, cts.Token);
+                using HttpResponseMessage resp = await _httpClient.PostAsync(_apiUrl, content, cts.Token);
                 string body = await resp.Content.ReadAsStringAsync();
-                if (string.IsNullOrEmpty(body) || LooksLikeHtml(resp, body))
+                if (string.IsNullOrEmpty(body) || IsUnboundResponse(resp, body))
                 {
                     return null;
                 }
@@ -200,8 +259,16 @@ namespace KerryInternetMonitor.Services
 
                 using var cts = new CancellationTokenSource(PortalRequestTimeout);
                 using var content = new FormUrlEncodedContent(fields);
-                HttpResponseMessage response = await _httpClient.PostAsync(_apiUrl, content, cts.Token);
+                using HttpResponseMessage response = await _httpClient.PostAsync(_apiUrl, content, cts.Token);
                 string responseData = await response.Content.ReadAsStringAsync();
+
+                if (IsUnboundResponse(response, responseData))
+                {
+                    // Portal handed us the login page (as HTML or a 302).
+                    // The caller (CheckConnectionStatusAsync) treats an
+                    // exception as "not connected", which is correct here.
+                    throw new Exception("Portal session not bound");
+                }
 
                 if (!string.IsNullOrEmpty(responseData))
                 {
@@ -261,10 +328,12 @@ namespace KerryInternetMonitor.Services
                     throw error ?? new Exception("Authentication failed after retries");
                 }
 
-                // An unbound session returns the portal HTML page with a 200
-                // status instead of JSON. Re-handshake and retry once.
-                if (LooksLikeHtml(response, body))
+                // An unbound session either 302s to the portal page or
+                // returns portal HTML with 200. Wipe stale cookies, redo the
+                // handshake from a clean slate, and retry once.
+                if (IsUnboundResponse(response, body))
                 {
+                    ClearPortalCookies();
                     await EnsurePortalSessionAsync(force: true);
                     var (retryResponse, retryBody, _) = await PortalPostWithRetryAsync(fields);
                     if (retryResponse != null)
@@ -274,20 +343,23 @@ namespace KerryInternetMonitor.Services
                     }
                 }
 
-                if (string.IsNullOrEmpty(body))
+                // Check unbound before empty: a 302 legitimately has no body,
+                // so an empty body is only a real error if the response is
+                // otherwise well-formed.
+                if (IsUnboundResponse(response, body))
                 {
-                    throw new Exception("Empty response from server");
-                }
-
-                if (LooksLikeHtml(response, body))
-                {
-                    // Still HTML -> maybe it actually took effect; verify.
+                    // Still unbound -> maybe it actually took effect; verify.
                     JsonDocument? verified = await TryGetConnectedStateAsync();
                     if (verified != null)
                     {
                         return verified;
                     }
                     throw new Exception("Portal returned HTML instead of JSON (session not bound)");
+                }
+
+                if (string.IsNullOrEmpty(body))
+                {
+                    throw new Exception("Empty response from server");
                 }
 
                 return JsonDocument.Parse(body);
@@ -336,8 +408,9 @@ namespace KerryInternetMonitor.Services
                     throw error ?? new Exception("Disconnect failed after retries");
                 }
 
-                if (LooksLikeHtml(response, body))
+                if (IsUnboundResponse(response, body))
                 {
+                    ClearPortalCookies();
                     await EnsurePortalSessionAsync(force: true);
                     var (retryResponse, retryBody, _) = await PortalPostWithRetryAsync(fields);
                     if (retryResponse != null)
@@ -347,14 +420,10 @@ namespace KerryInternetMonitor.Services
                     }
                 }
 
-                if (string.IsNullOrEmpty(body))
+                // Check unbound before empty: a 302 legitimately has no body.
+                if (IsUnboundResponse(response, body))
                 {
-                    throw new Exception("Empty response from server");
-                }
-
-                if (LooksLikeHtml(response, body))
-                {
-                    // Still HTML -> verify whether the disconnect actually applied.
+                    // Still unbound -> verify whether the disconnect actually applied.
                     JsonDocument? verified = await TryGetConnectedStateAsync();
                     if (verified == null)
                     {
@@ -362,6 +431,11 @@ namespace KerryInternetMonitor.Services
                     }
                     verified.Dispose();
                     throw new Exception("Portal returned HTML instead of JSON (session not bound)");
+                }
+
+                if (string.IsNullOrEmpty(body))
+                {
+                    throw new Exception("Empty response from server");
                 }
 
                 return JsonDocument.Parse(body);

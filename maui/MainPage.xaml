@@ -190,7 +190,7 @@
                     </Label.GestureRecognizers>
                 </Label>
 
-                <Label x:Name="VersionLabel" Text="v1.0.9" FontSize="11"
+                <Label x:Name="VersionLabel" Text="v1.1.0" FontSize="11"
                        HorizontalOptions="Center" VerticalOptions="Center" Grid.Column="1"/>
 
                 <Label x:Name="GitHubLabel" Text="© Damiasroca" FontSize="12"

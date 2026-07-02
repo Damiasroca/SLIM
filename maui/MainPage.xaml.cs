@@ -12,7 +12,7 @@ namespace KerryInternetMonitor;
 
 public partial class MainPage : ContentPage
 {
-    public const string AppVersion = "1.0.9";
+    public const string AppVersion = "1.1.0";
 
     private readonly StenaConnectionService _connectionService;
     private readonly DataStorageService _storageService;

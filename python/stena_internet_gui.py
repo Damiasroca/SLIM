@@ -90,7 +90,7 @@ load_config()
 COLORS = THEMES[current_theme]
 
 # Application version (shown in window title and footer)
-APP_VERSION = "1.0.9"
+APP_VERSION = "1.1.0"
 
 # API Configuration
 API_URL = "https://internet.stenaline.com/portal_api.php"
