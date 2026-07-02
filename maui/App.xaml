@@ -1,0 +1,70 @@
+<?xml version = "1.0" encoding = "UTF-8" ?>
+<Application xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             xmlns:local="clr-namespace:KerryInternetMonitor"
+             x:Class="KerryInternetMonitor.App">
+    <Application.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="Resources/Styles/Colors.xaml" />
+                <ResourceDictionary Source="Resources/Styles/Styles.xaml" />
+            </ResourceDictionary.MergedDictionaries>
+
+            <!-- Dark Theme Colors (matching Python app) -->
+            <Color x:Key="DarkBg">#1a1a2e</Color>
+            <Color x:Key="DarkBgSecondary">#16213e</Color>
+            <Color x:Key="DarkBgTertiary">#0f3460</Color>
+            <Color x:Key="DarkText">#eaeaea</Color>
+            <Color x:Key="DarkTextSecondary">#a0a0a0</Color>
+            <Color x:Key="DarkAccent">#4361ee</Color>
+            <Color x:Key="DarkSuccess">#4ade80</Color>
+            <Color x:Key="DarkWarning">#fbbf24</Color>
+            <Color x:Key="DarkError">#f87171</Color>
+            <Color x:Key="DarkBorder">#2a2a4a</Color>
+
+            <!-- Light Theme Colors (matching Python app) -->
+            <Color x:Key="LightBg">#f8fafc</Color>
+            <Color x:Key="LightBgSecondary">#ffffff</Color>
+            <Color x:Key="LightBgTertiary">#f1f5f9</Color>
+            <Color x:Key="LightText">#1e293b</Color>
+            <Color x:Key="LightTextSecondary">#64748b</Color>
+            <Color x:Key="LightAccent">#3b82f6</Color>
+            <Color x:Key="LightSuccess">#22c55e</Color>
+            <Color x:Key="LightWarning">#f59e0b</Color>
+            <Color x:Key="LightError">#ef4444</Color>
+            <Color x:Key="LightBorder">#e2e8f0</Color>
+
+            <!-- Default Application colors (legacy support) -->
+            <Color x:Key="Primary">#4361ee</Color>
+            <Color x:Key="Secondary">#4ade80</Color>
+            <Color x:Key="Accent">#fbbf24</Color>
+            <Color x:Key="Warning">#fbbf24</Color>
+            <Color x:Key="Error">#f87171</Color>
+            <Color x:Key="Background">#1a1a2e</Color>
+            <Color x:Key="TextPrimary">#eaeaea</Color>
+            <Color x:Key="TextSecondary">#a0a0a0</Color>
+
+            <!-- Custom styles -->
+            <Style TargetType="Frame" x:Key="CardFrame">
+                <Setter Property="BorderColor" Value="#2a2a4a" />
+                <Setter Property="CornerRadius" Value="8" />
+                <Setter Property="Padding" Value="15" />
+                <Setter Property="Margin" Value="0,5" />
+                <Setter Property="HasShadow" Value="True" />
+            </Style>
+
+            <Style TargetType="Label" x:Key="HeaderLabel">
+                <Setter Property="FontFamily" Value="StenaSansBold" />
+                <Setter Property="FontSize" Value="16" />
+                <Setter Property="TextColor" Value="{StaticResource Primary}" />
+            </Style>
+
+            <Style TargetType="Button">
+                <Setter Property="CornerRadius" Value="8" />
+                <Setter Property="Padding" Value="12,8" />
+                <Setter Property="TextColor" Value="White" />
+                <Setter Property="FontFamily" Value="StenaSansBold" />
+            </Style>
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>

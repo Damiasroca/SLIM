@@ -1,0 +1,205 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             x:Class="KerryInternetMonitor.MainPage"
+             x:Name="ThisPage"
+             Title="Stena Line Internet Monitor">
+
+    <ScrollView x:Name="MainScrollView">
+        <VerticalStackLayout x:Name="MainLayout" Spacing="12" Padding="16">
+
+            <!-- Info Banner -->
+            <Frame x:Name="InfoBanner" Padding="12" CornerRadius="8" HasShadow="False">
+                <Label x:Name="InfoLabel"
+                       Text="💡 For Stena Line captive portal, the username and password are the same."
+                       FontSize="13" />
+            </Frame>
+
+            <!-- Login Credentials Section -->
+            <Frame x:Name="CredentialsFrame" Padding="15" CornerRadius="8" HasShadow="True">
+                <VerticalStackLayout Spacing="10">
+                    <Label x:Name="CredentialsTitle" Text="Login Credentials" FontFamily="StenaSansBold" FontSize="16"/>
+
+                    <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto" ColumnSpacing="10" RowSpacing="10">
+                        <Label x:Name="UsernameLabel" Text="Username:" VerticalOptions="Center" Grid.Row="0" Grid.Column="0"/>
+                        <Entry x:Name="UsernameEntry" Placeholder="Enter username" Grid.Row="0" Grid.Column="1"/>
+
+                        <Label x:Name="PasswordLabel" Text="Password:" VerticalOptions="Center" Grid.Row="1" Grid.Column="0"/>
+                        <Entry x:Name="PasswordEntry" Placeholder="Enter password" IsPassword="True" Grid.Row="1" Grid.Column="1"/>
+                    </Grid>
+                </VerticalStackLayout>
+            </Frame>
+
+            <!-- Profile Management Section -->
+            <Frame x:Name="ProfileFrame" Padding="15" CornerRadius="8" HasShadow="True">
+                <VerticalStackLayout Spacing="10">
+                    <Label x:Name="ProfileTitle" Text="Profile Management" FontFamily="StenaSansBold" FontSize="16"/>
+
+                    <Grid ColumnDefinitions="Auto,*" RowDefinitions="Auto,Auto" RowSpacing="12" ColumnSpacing="10">
+                        <Label x:Name="SelectProfileLabel" Text="Select Profile:" VerticalOptions="Center" Grid.Row="0" Grid.Column="0"/>
+                        <Picker x:Name="ProfilePicker" Grid.Row="0" Grid.Column="1"
+                                SelectedIndexChanged="ProfilePicker_SelectedIndexChanged" HeightRequest="40"/>
+
+                        <Label x:Name="NewProfileLabel" Text="New Profile:" VerticalOptions="Center" Grid.Row="1" Grid.Column="0"/>
+                        <Entry x:Name="NewProfileEntry" Placeholder="Enter profile name" Grid.Row="1" Grid.Column="1" HeightRequest="40"/>
+                    </Grid>
+
+                    <HorizontalStackLayout Spacing="10" HorizontalOptions="Center">
+                        <Button x:Name="SaveProfileBtn" Text="Save Profile"
+                                Clicked="SaveProfile_Clicked" Padding="12,8"/>
+                        <Button x:Name="DeleteProfileBtn" Text="Delete Profile"
+                                Clicked="DeleteProfile_Clicked" Padding="12,8"/>
+                    </HorizontalStackLayout>
+                </VerticalStackLayout>
+            </Frame>
+
+            <!-- Action Buttons -->
+            <FlexLayout x:Name="ActionButtonsLayout" Wrap="Wrap" JustifyContent="Center" AlignItems="Center"
+                        AlignContent="Center" Direction="Row">
+                <Button x:Name="FetchBtn" Text="Fetch Data/Connect"
+                        Clicked="FetchData_Clicked" Padding="15,10" Margin="4"/>
+                <Button x:Name="SaveHistoryBtn" Text="Save History"
+                        Clicked="SaveHistory_Clicked" Padding="12,10" Margin="4"/>
+                <Button x:Name="ClearBtn" Text="Clear Display"
+                        Clicked="ClearDisplay_Clicked" Padding="12,10" Margin="4"/>
+                <Button x:Name="FlushDnsBtn" Text="Flush DNS"
+                        Clicked="FlushDns_Clicked" Padding="12,10" Margin="4"/>
+                <Button x:Name="DisconnectBtn" Text="Disconnect"
+                        Clicked="Disconnect_Clicked" Padding="12,10" Margin="4"/>
+            </FlexLayout>
+
+            <!-- Tab strip -->
+            <Grid x:Name="TabStrip" ColumnDefinitions="*,*,*" ColumnSpacing="4">
+                <Button x:Name="TabUsageBtn" Text="Internet Usage" Grid.Column="0"
+                        Clicked="TabUsage_Clicked" Padding="8,8" FontSize="12"/>
+                <Button x:Name="TabQualityBtn" Text="Network Quality" Grid.Column="1"
+                        Clicked="TabQuality_Clicked" Padding="8,8" FontSize="12"/>
+                <Button x:Name="TabIpBtn" Text="IP Info" Grid.Column="2"
+                        Clicked="TabIp_Clicked" Padding="8,8" FontSize="12"/>
+            </Grid>
+
+            <!-- ===== Tab: Internet Usage ===== -->
+            <Frame x:Name="UsageTab" Padding="12" CornerRadius="8" HasShadow="True">
+                <VerticalStackLayout Spacing="10">
+                    <!-- VPN banner (only shown when VPN detected) -->
+                    <Frame x:Name="UsageVpnBanner" Padding="10,6" CornerRadius="6" HasShadow="False"
+                           IsVisible="False">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <Label x:Name="UsageVpnBannerText" Grid.Column="0"
+                                   FontSize="12" FontFamily="StenaSansBold" LineBreakMode="WordWrap" Text=""/>
+                            <Label x:Name="UsageVpnBannerClose" Grid.Column="1"
+                                   Text="✕" FontSize="16" FontFamily="StenaSansBold" Margin="10,0,0,0">
+                                <Label.GestureRecognizers>
+                                    <TapGestureRecognizer Tapped="DismissVpnBanner_Tapped"/>
+                                </Label.GestureRecognizers>
+                            </Label>
+                        </Grid>
+                    </Frame>
+
+                    <Label x:Name="UsageTitle" Text="Internet Usage Information" FontFamily="StenaSansBold" FontSize="16"/>
+
+                    <!-- Quota gauge (hidden until we have quota data) -->
+                    <GraphicsView x:Name="QuotaGaugeView" HeightRequest="200" WidthRequest="260"
+                                  HorizontalOptions="Center" IsVisible="False"/>
+
+                    <ScrollView HeightRequest="350" VerticalScrollBarVisibility="Always">
+                        <Label x:Name="OutputText"
+                               Text="Welcome to Stena Line Internet Monitor!"
+                               LineBreakMode="WordWrap"
+                               FontFamily="Consolas"/>
+                    </ScrollView>
+                </VerticalStackLayout>
+            </Frame>
+
+            <!-- ===== Tab: Network Quality ===== -->
+            <Frame x:Name="QualityTab" Padding="12" CornerRadius="8" HasShadow="True" IsVisible="False">
+                <VerticalStackLayout Spacing="8">
+                    <Label x:Name="QualityDescription"
+                           Text="Samples TCP connect time &amp; packet loss to internet.stenaline.com. Leave it running to learn which hours are quiet."
+                           FontSize="11" LineBreakMode="WordWrap"/>
+
+                    <Frame x:Name="QualityVpnBanner" Padding="10,6" CornerRadius="6" HasShadow="False"
+                           IsVisible="False">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <Label x:Name="QualityVpnBannerText" Grid.Column="0"
+                                   FontSize="12" FontFamily="StenaSansBold" LineBreakMode="WordWrap" Text=""/>
+                            <Label x:Name="QualityVpnBannerClose" Grid.Column="1"
+                                   Text="✕" FontSize="16" FontFamily="StenaSansBold" Margin="10,0,0,0">
+                                <Label.GestureRecognizers>
+                                    <TapGestureRecognizer Tapped="DismissVpnBanner_Tapped"/>
+                                </Label.GestureRecognizers>
+                            </Label>
+                        </Grid>
+                    </Frame>
+
+                    <Label x:Name="QualityCurrentLabel" Text="Sampling…" FontFamily="StenaSansBold" FontSize="13"/>
+
+                    <Label x:Name="QualityHeatmapTitle" Text="Latency by hour of day (local time)"
+                           FontFamily="StenaSansBold" FontSize="13"/>
+
+                    <ScrollView Orientation="Horizontal" HorizontalScrollBarVisibility="Never">
+                        <GraphicsView x:Name="HeatmapView" HeightRequest="70" WidthRequest="700"/>
+                    </ScrollView>
+
+                    <Label x:Name="QualityDetailLabel" Text="Hover a cell for details." FontSize="11"/>
+                    <Label x:Name="QualityLegendLabel"
+                           Text="green = fast   yellow = sluggish   red = slow / packet loss   dark = unreachable"
+                           FontSize="10"/>
+                    <Label x:Name="QualitySummaryLabel" Text="" FontSize="12" LineBreakMode="WordWrap"/>
+
+                    <Label x:Name="QualityChartTitle"
+                           Text="All probes — latency (ms) by time of day  •  bars = jitter"
+                           FontFamily="StenaSansBold" FontSize="13" Margin="0,10,0,0"/>
+                    <GraphicsView x:Name="ProbeChartView" HeightRequest="180"/>
+                </VerticalStackLayout>
+            </Frame>
+
+            <!-- ===== Tab: IP Info ===== -->
+            <Frame x:Name="IpInfoTab" Padding="12" CornerRadius="8" HasShadow="True" IsVisible="False">
+                <VerticalStackLayout Spacing="10">
+                    <Grid ColumnDefinitions="*,Auto">
+                        <Label x:Name="IpInfoTitle" Grid.Column="0" Text="External IP Information"
+                               FontFamily="StenaSansBold" FontSize="16" VerticalOptions="Center"/>
+                        <Button x:Name="IpInfoRefreshBtn" Grid.Column="1" Text="Refresh"
+                                Clicked="IpInfoRefresh_Clicked" Padding="12,8"/>
+                    </Grid>
+
+                    <ScrollView HeightRequest="380" VerticalScrollBarVisibility="Always">
+                        <Label x:Name="IpInfoText"
+                               Text="Click 'Refresh' to look up your public IP information."
+                               LineBreakMode="WordWrap"
+                               FontFamily="Consolas"/>
+                    </ScrollView>
+                </VerticalStackLayout>
+            </Frame>
+
+            <!-- Status Bar -->
+            <Grid ColumnDefinitions="Auto,*" Margin="5">
+                <Frame x:Name="StatusIndicator" HeightRequest="12" WidthRequest="12" CornerRadius="6"
+                       Padding="0" BorderColor="Transparent"
+                       Grid.Column="0" Margin="0,0,8,0"/>
+                <Label x:Name="StatusLabel" Text="Ready" VerticalOptions="Center" Grid.Column="1" FontSize="13"/>
+            </Grid>
+
+            <!-- Footer -->
+            <Grid ColumnDefinitions="Auto,*,Auto" Margin="5,10,5,5">
+                <Label x:Name="ThemeToggleLabel" Text="🌙 Dark" FontSize="13"
+                       HorizontalOptions="Start" Grid.Column="0">
+                    <Label.GestureRecognizers>
+                        <TapGestureRecognizer Tapped="ToggleTheme_Tapped"/>
+                    </Label.GestureRecognizers>
+                </Label>
+
+                <Label x:Name="VersionLabel" Text="v1.0.9" FontSize="11"
+                       HorizontalOptions="Center" VerticalOptions="Center" Grid.Column="1"/>
+
+                <Label x:Name="GitHubLabel" Text="© Damiasroca" FontSize="12"
+                       HorizontalOptions="End" TextDecorations="Underline" Grid.Column="2">
+                    <Label.GestureRecognizers>
+                        <TapGestureRecognizer Tapped="OpenGitHub_Tapped"/>
+                    </Label.GestureRecognizers>
+                </Label>
+            </Grid>
+        </VerticalStackLayout>
+    </ScrollView>
+</ContentPage>

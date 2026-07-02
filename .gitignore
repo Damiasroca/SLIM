@@ -1,0 +1,43 @@
+# Root .gitignore for the consolidated repo. Each sub-project also has its
+# own .gitignore (e.g. python/.gitignore) for language-specific patterns.
+
+# .NET / MAUI build artifacts
+maui/bin/
+maui/obj/
+maui/.vs/
+maui/**/bin/
+maui/**/obj/
+*.csproj.user
+*.suo
+
+# Android signing keys (contain private keys - never commit!)
+*.keystore
+*.jks
+
+# Python virtual environments
+venv/
+.venv/
+env/
+
+# Python build/cache
+__pycache__/
+*.py[cod]
+build/
+dist/
+*.egg-info/
+
+# Release binaries (use GitHub Releases instead)
+releases/
+
+# Runtime/debug logs
+*.log
+python/portal_debug.log
+
+# IDE / Editor caches
+.vscode/
+.idea/
+*.swp
+
+# OS noise
+Thumbs.db
+.DS_Store

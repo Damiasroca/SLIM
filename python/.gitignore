@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# PyInstaller build artifacts
+build/
+dist/
+*.manifest
+
+# Legacy / bundled third-party binaries (not used at runtime)
+bin/
+
+# Old backup copies
+original/
+
+# User data & runtime-generated files (may contain credentials)
+profiles.json
+config.json
+network_quality.csv
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Editor / IDE
+.idea/
+.vscode/
+*.swp
