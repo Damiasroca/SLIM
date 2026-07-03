@@ -1,5 +1,7 @@
+using System.Diagnostics;
 using System.Net;
 using System.Net.Http.Headers;
+using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 
@@ -10,6 +12,33 @@ namespace KerryInternetMonitor.Services
         private readonly HttpClient _httpClient;
         private readonly CookieContainer _cookies;
         private readonly string _apiUrl = "https://internet.stenaline.com/portal_api.php";
+
+        // Debug logging - writes to logcat on Android, Debug output on Windows
+        private static void Log(string message)
+        {
+            string msg = $"[SLIM] {message}";
+            Debug.WriteLine(msg);
+            Console.WriteLine(msg);  // Also to console for adb logcat
+        }
+
+        private string DumpCookies(Uri uri)
+        {
+            var cookies = _cookies.GetCookies(uri);
+            if (cookies.Count == 0) return "(none)";
+            var sb = new StringBuilder();
+            foreach (Cookie c in cookies)
+            {
+                sb.Append($"{c.Name}={c.Value?.Substring(0, Math.Min(c.Value?.Length ?? 0, 12))}... ");
+            }
+            return sb.ToString().TrimEnd();
+        }
+
+        private static string DumpSetCookieHeaders(HttpResponseMessage resp)
+        {
+            if (!resp.Headers.TryGetValues("Set-Cookie", out var values))
+                return "(none)";
+            return string.Join(" | ", values.Select(v => v.Length > 60 ? v.Substring(0, 60) + "..." : v));
+        }
 
         // Landing page used to replicate the UCOPIA captive-portal handshake.
         private const string PortalLandingUrl = "https://internet.stenaline.com/";
@@ -67,8 +96,12 @@ namespace KerryInternetMonitor.Services
         /// </summary>
         private void ClearPortalCookies()
         {
-            foreach (Cookie c in _cookies.GetCookies(new Uri(PortalLandingUrl)))
+            var uri = new Uri(PortalLandingUrl);
+            var cookies = _cookies.GetCookies(uri);
+            Log($"ClearPortalCookies: expiring {cookies.Count} cookies");
+            foreach (Cookie c in cookies)
             {
+                Log($"  Expiring: {c.Name}={c.Value?.Substring(0, Math.Min(c.Value?.Length ?? 0, 12))}...");
                 c.Expired = true;
             }
         }
@@ -100,59 +133,65 @@ namespace KerryInternetMonitor.Services
         /// </summary>
         public async Task<bool> EnsurePortalSessionAsync(bool force = false)
         {
+            Log($"EnsurePortalSessionAsync(force={force}), _portalSessionReady={_portalSessionReady}");
+            
             if (_portalSessionReady && !force)
             {
+                Log("  -> already ready, returning true");
                 return true;
             }
 
             _portalSessionReady = false;
             for (int i = 0; i < PortalHandshakeAttempts; i++)
             {
+                Log($"  Handshake attempt {i + 1}/{PortalHandshakeAttempts}");
                 try
                 {
                     Uri current = new Uri(PortalLandingUrl);
                     for (int hop = 0; hop < PortalRedirectHops; hop++)
                     {
+                        Log($"    Hop {hop}: GET {current}");
+                        Log($"    Cookies being sent: {DumpCookies(current)}");
+                        
                         using var cts = new CancellationTokenSource(PortalRequestTimeout);
                         using HttpResponseMessage resp = await _httpClient.GetAsync(current, cts.Token);
                         PortalUrl = current.ToString();
 
                         int code = (int)resp.StatusCode;
+                        Log($"    Response: {code} {resp.ReasonPhrase}");
+                        Log($"    Set-Cookie: {DumpSetCookieHeaders(resp)}");
+                        Log($"    Cookies after response: {DumpCookies(current)}");
+                        
                         if (code >= 300 && code < 400 && resp.Headers.Location != null)
                         {
-                            // Set-Cookie on this 302 was already parsed into
-                            // CookieContainer by the handler because we're
-                            // NOT auto-following. Resolve the next hop and
-                            // continue -- the next GET will send the freshly
-                            // rotated PHPSESSID.
-                            current = resp.Headers.Location.IsAbsoluteUri
+                            Uri nextUri = resp.Headers.Location.IsAbsoluteUri
                                 ? resp.Headers.Location
                                 : new Uri(current, resp.Headers.Location);
+                            Log($"    -> Redirect to: {nextUri}");
+                            current = nextUri;
                             continue;
                         }
 
                         Match match = Regex.Match(current.ToString(), @"/(\d+)/portal/");
                         if (match.Success)
                         {
-                            // Reached the zoned portal -> session is ready.
                             PortalSiteId = match.Groups[1].Value;
                             _portalSessionReady = true;
+                            Log($"    -> SUCCESS: Reached zoned portal, siteId={PortalSiteId}");
                             return true;
                         }
-                        // Non-redirect page that isn't /<zone>/portal/
-                        // (probably portal_degraded). Break out of the hop
-                        // loop and let the outer attempt loop retry -- the
-                        // cookie is now set, so the next full attempt should
-                        // land on the zoned URL.
+                        
+                        Log($"    -> Non-redirect, non-zoned page. Breaking to retry.");
                         break;
                     }
                 }
                 catch (Exception ex) when (ex is HttpRequestException || ex is TaskCanceledException || ex is OperationCanceledException)
                 {
-                    // First SYN over satellite is frequently dropped; retry.
+                    Log($"    -> Exception: {ex.GetType().Name}: {ex.Message}");
                 }
             }
 
+            Log("  -> FAILED: Could not establish portal session");
             return false;
         }
 
@@ -167,37 +206,72 @@ namespace KerryInternetMonitor.Services
         private async Task<(HttpResponseMessage? Response, string Body, Exception? Error)> PortalPostWithRetryAsync(
             KeyValuePair<string, string>[] fields, int attempts = PortalPostAttempts)
         {
+            string action = fields.FirstOrDefault(f => f.Key == "action").Value ?? "unknown";
+            Log($"PortalPostWithRetryAsync: action={action}, attempts={attempts}");
+            
             Exception? lastErr = null;
             for (int i = 0; i < attempts; i++)
             {
                 try
                 {
+                    var apiUri = new Uri(_apiUrl);
+                    Log($"  POST attempt {i + 1}/{attempts} to {_apiUrl}");
+                    Log($"  Cookies being sent: {DumpCookies(apiUri)}");
+                    
                     using var cts = new CancellationTokenSource(PortalRequestTimeout);
                     using var content = new FormUrlEncodedContent(fields);
                     HttpResponseMessage resp = await _httpClient.PostAsync(_apiUrl, content, cts.Token);
                     string body = await resp.Content.ReadAsStringAsync();
+                    
+                    string contentType = resp.Content.Headers.ContentType?.MediaType ?? "(none)";
+                    Log($"  Response: {(int)resp.StatusCode} {resp.ReasonPhrase}, Content-Type: {contentType}, Body length: {body.Length}");
+                    Log($"  Set-Cookie: {DumpSetCookieHeaders(resp)}");
+                    
+                    bool looksHtml = LooksLikeHtml(resp, body);
+                    bool isUnbound = IsUnboundResponse(resp, body);
+                    Log($"  LooksLikeHtml={looksHtml}, IsUnboundResponse={isUnbound}");
+                    
+                    if (body.Length > 0 && body.Length < 500)
+                        Log($"  Body: {body}");
+                    else if (body.Length >= 500)
+                        Log($"  Body (first 500): {body.Substring(0, 500)}...");
+                    
                     return (resp, body, null);
                 }
                 catch (Exception ex) when (ex is HttpRequestException || ex is TaskCanceledException || ex is OperationCanceledException)
                 {
                     lastErr = ex;
                     int backoff = (int)Math.Min(Math.Pow(2, i), 8);
+                    Log($"  Attempt {i + 1} failed: {ex.GetType().Name}: {ex.Message}, backoff={backoff}s");
                     await Task.Delay(TimeSpan.FromSeconds(backoff));
                 }
             }
+            Log($"  -> All attempts failed");
             return (null, string.Empty, lastErr);
         }
 
         private static bool LooksLikeHtml(HttpResponseMessage response, string body)
         {
-            string contentType = response.Content.Headers.ContentType?.MediaType ?? string.Empty;
-            if (contentType.Contains("html", StringComparison.OrdinalIgnoreCase))
+            // IMPORTANT: The Stena portal often returns valid JSON with
+            // Content-Type: text/html. We must check the actual body content,
+            // not trust the Content-Type header. If body starts with '{' or '['
+            // it's JSON, not HTML.
+            string trimmed = body.TrimStart();
+            if (trimmed.StartsWith("{") || trimmed.StartsWith("["))
+            {
+                return false;  // It's JSON, not HTML
+            }
+            
+            // Only now check for actual HTML markers
+            if (trimmed.StartsWith("<!doctype", StringComparison.OrdinalIgnoreCase)
+                || trimmed.StartsWith("<html", StringComparison.OrdinalIgnoreCase))
             {
                 return true;
             }
-            string trimmed = body.TrimStart();
-            return trimmed.StartsWith("<!doctype", StringComparison.OrdinalIgnoreCase)
-                || trimmed.StartsWith("<html", StringComparison.OrdinalIgnoreCase);
+            
+            // As a fallback, if Content-Type says HTML and body doesn't look like JSON
+            string contentType = response.Content.Headers.ContentType?.MediaType ?? string.Empty;
+            return contentType.Contains("html", StringComparison.OrdinalIgnoreCase);
         }
 
         /// <summary>
@@ -293,6 +367,7 @@ namespace KerryInternetMonitor.Services
 
         public async Task<JsonDocument> AuthenticateAsync(string username, string password)
         {
+            Log($"========== AuthenticateAsync START for user={username} ==========");
             try
             {
                 var fields = new[]
@@ -307,73 +382,86 @@ namespace KerryInternetMonitor.Services
                     new KeyValuePair<string, string>("wispr_mode", "false")
                 };
 
-                // UCOPIA only accepts `authenticate` when a fresh GET to
-                // /<zone>/portal/ immediately precedes it (the portal is a stateful
-                // step-machine and the POST rotates PHPSESSID). A cached/stale
-                // handshake makes the first POST return the portal HTML instead of
-                // JSON, so force a fresh handshake right before authenticating.
+                Log("Step 1: EnsurePortalSessionAsync(force=true)");
                 await EnsurePortalSessionAsync(force: true);
 
+                Log("Step 2: First PortalPostWithRetryAsync (authenticate)");
                 var (response, body, error) = await PortalPostWithRetryAsync(fields);
 
                 if (response == null)
                 {
-                    // Every attempt timed out. The action may still have taken
-                    // effect on the gateway, so verify via init before failing.
+                    Log("Step 2 result: response is NULL (all attempts failed)");
+                    Log("Step 3: TryGetConnectedStateAsync to verify");
                     JsonDocument? verified = await TryGetConnectedStateAsync();
                     if (verified != null)
                     {
+                        Log("  -> Verified connected despite timeout, returning success");
                         return verified;
                     }
+                    Log("  -> Not verified, throwing");
                     throw error ?? new Exception("Authentication failed after retries");
                 }
 
-                // An unbound session either 302s to the portal page or
-                // returns portal HTML with 200. Wipe stale cookies, redo the
-                // handshake from a clean slate, and retry once.
+                Log($"Step 2 result: got response, IsUnboundResponse={IsUnboundResponse(response, body)}");
+                
                 if (IsUnboundResponse(response, body))
                 {
+                    Log("Step 3: Response is UNBOUND, clearing cookies and retrying");
                     ClearPortalCookies();
+                    
+                    Log("Step 4: EnsurePortalSessionAsync(force=true) again");
                     await EnsurePortalSessionAsync(force: true);
+                    
+                    Log("Step 5: Retry PortalPostWithRetryAsync (authenticate)");
                     var (retryResponse, retryBody, _) = await PortalPostWithRetryAsync(fields);
                     if (retryResponse != null)
                     {
                         response = retryResponse;
                         body = retryBody;
+                        Log($"Step 5 result: got retry response, IsUnboundResponse={IsUnboundResponse(response, body)}");
+                    }
+                    else
+                    {
+                        Log("Step 5 result: retry response is NULL");
                     }
                 }
 
-                // Check unbound before empty: a 302 legitimately has no body,
-                // so an empty body is only a real error if the response is
-                // otherwise well-formed.
                 if (IsUnboundResponse(response, body))
                 {
-                    // Still unbound -> maybe it actually took effect; verify.
+                    Log("Still UNBOUND after retry, trying TryGetConnectedStateAsync");
                     JsonDocument? verified = await TryGetConnectedStateAsync();
                     if (verified != null)
                     {
+                        Log("  -> Verified connected, returning success");
                         return verified;
                     }
+                    Log("  -> Not verified, throwing 'session not bound'");
                     throw new Exception("Portal returned HTML instead of JSON (session not bound)");
                 }
 
                 if (string.IsNullOrEmpty(body))
                 {
+                    Log("Body is empty, throwing");
                     throw new Exception("Empty response from server");
                 }
 
+                Log("SUCCESS: Parsing JSON response");
+                Log($"========== AuthenticateAsync END (success) ==========");
                 return JsonDocument.Parse(body);
             }
             catch (HttpRequestException ex)
             {
+                Log($"========== AuthenticateAsync END (HttpRequestException: {ex.Message}) ==========");
                 throw new Exception($"Network error: {ex.Message}", ex);
             }
             catch (JsonException ex)
             {
+                Log($"========== AuthenticateAsync END (JsonException: {ex.Message}) ==========");
                 throw new Exception($"Invalid JSON response: {ex.Message}", ex);
             }
             catch (Exception ex)
             {
+                Log($"========== AuthenticateAsync END (Exception: {ex.Message}) ==========");
                 throw new Exception($"Authentication error: {ex.Message}", ex);
             }
         }
