@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         SLIM quota
 // @namespace    https://github.com/Damiasroca/SLIM
-// @version      1.0.0
-// @description  Auto-show Stena Line captive-portal quota on the portal page.
+// @version      1.1.0
+// @description  Auto-show Stena Line captive-portal quota on the portal page, refreshing periodically.
 // @author       Damiasroca
 // @match        https://internet.stenaline.com/*
 // @run-at       document-idle
@@ -14,6 +14,13 @@
 
   var API = "https://internet.stenaline.com/portal_api.php";
   var ID = "slim-quota-overlay";
+  // How often to re-check quota. 60000 = every minute, 120000 = every two.
+  // Each tick is one small POST to the portal; keep it modest to save quota.
+  var REFRESH_MS = 120000;
+
+  var stopped = false;
+  var inFlight = false;
+  var timer = null;
 
   function mb(b) {
     var n = Number(b);
@@ -47,12 +54,29 @@
     return d + "d " + h + "h " + m + "m";
   }
 
-  function mountBox() {
-    var prev = document.getElementById(ID);
-    if (prev) prev.remove();
-    var box = document.createElement("div");
-    box.id = ID;
-    box.style.cssText = [
+  function pad2(n) { return n < 10 ? "0" + n : "" + n; }
+
+  function updatedFooter() {
+    var now = new Date();
+    return (
+      '<div style="margin-top:8px;font-size:11px;color:#a0a0a0;display:flex;justify-content:space-between">' +
+      "<span>Updated " + pad2(now.getHours()) + ":" + pad2(now.getMinutes()) + ":" + pad2(now.getSeconds()) + "</span>" +
+      "<span>Every " + (REFRESH_MS / 1000) + "s</span>" +
+      "</div>"
+    );
+  }
+
+  function removeCard() {
+    var el = document.getElementById(ID);
+    if (el) el.remove();
+  }
+
+  function ensureBox() {
+    var el = document.getElementById(ID);
+    if (el) return el;
+    el = document.createElement("div");
+    el.id = ID;
+    el.style.cssText = [
       "position:fixed",
       "top:16px",
       "right:16px",
@@ -67,18 +91,30 @@
       "border-radius:12px",
       "box-shadow:0 10px 30px rgba(0,0,0,0.4)"
     ].join(";");
+    var content = document.createElement("div");
+    content.setAttribute("data-slim-content", "");
+    el.appendChild(content);
     var close = document.createElement("button");
     close.textContent = "\u00d7";
     close.style.cssText =
       "position:absolute;top:4px;right:8px;background:transparent;border:none;color:#a0a0a0;font-size:22px;line-height:1;cursor:pointer";
-    close.onclick = function () { box.remove(); };
-    document.body.appendChild(box);
-    return { box: box, close: close };
+    close.onclick = function () {
+      stopped = true;
+      if (timer) { clearInterval(timer); timer = null; }
+      el.remove();
+    };
+    el.appendChild(close);
+    document.body.appendChild(el);
+    return el;
+  }
+
+  function setContent(html) {
+    var el = ensureBox();
+    var slot = el.querySelector("[data-slim-content]");
+    if (slot) slot.innerHTML = html;
   }
 
   function renderConnected(u) {
-    var mounted = mountBox();
-    var box = mounted.box, close = mounted.close;
     var c = u.consumedData || {};
     var dl = Number((c.download && c.download.value) || 0);
     var up = Number((c.upload && c.upload.value) || 0);
@@ -105,7 +141,7 @@
     }
     var renew = Number((c.renewTimestamp && c.renewTimestamp.value) || 0);
     var name = (u.login && u.login.value) || "Connected";
-    box.innerHTML =
+    setContent(
       '<div style="font-weight:700;color:#4361ee;margin-bottom:6px">' + name + "</div>" +
       section("Data usage") +
       row("Download", mb(dl)) +
@@ -116,44 +152,64 @@
         ? section("Renewal") +
           row("In", timeLeft(renew)) +
           row("Date", new Date(renew * 1000).toLocaleString())
-        : "");
-    box.appendChild(close);
+        : "") +
+      updatedFooter()
+    );
   }
 
   function renderQuotaReached(ev) {
-    var mounted = mountBox();
-    var box = mounted.box, close = mounted.close;
     var total = Number(ev.consumedUp || 0) + Number(ev.consumedDown || 0);
-    box.innerHTML =
+    setContent(
       '<div style="font-weight:700;color:#f87171;margin-bottom:6px">Quota reached</div>' +
       row("Download", mb(ev.consumedDown)) +
       row("Upload", mb(ev.consumedUp)) +
       row("Total", mb(total), true) +
       (ev.thresoldUp ? row("Limit", mb(ev.thresoldUp)) : "") +
-      (ev.renewTimeStamp ? row("Renewal in", timeLeft(ev.renewTimeStamp)) : "");
-    box.appendChild(close);
+      (ev.renewTimeStamp ? row("Renewal in", timeLeft(ev.renewTimeStamp)) : "") +
+      updatedFooter()
+    );
   }
 
-  fetch(API, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: "action=init&free_urls=",
-    credentials: "include"
-  })
-    .then(function (r) { return r.json(); })
-    .then(function (data) {
-      if (data && data.error && data.error.code === "error_logon_volume-quota-reached-detail") {
-        renderQuotaReached(data.error.value || {});
-        return;
-      }
-      var u = (data && data.user) || {};
-      if (u.isConnected) {
-        renderConnected(u);
-      }
-      // Silent when not connected: user is on the login screen, leave the portal UI alone.
+  function tick() {
+    if (stopped || inFlight) return;
+    // Skip work when the tab is hidden; refresh will resume via
+    // visibilitychange below when the user comes back.
+    if (document.visibilityState === "hidden") return;
+    inFlight = true;
+    fetch(API, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "action=init&free_urls=",
+      credentials: "include"
     })
-    .catch(function (e) {
-      // Silent on network errors so the userscript is invisible when off the ship.
-      if (window.console && console.debug) console.debug("[SLIM] init failed:", e);
-    });
+      .then(function (r) { return r.json(); })
+      .then(function (data) {
+        if (data && data.error && data.error.code === "error_logon_volume-quota-reached-detail") {
+          renderQuotaReached(data.error.value || {});
+          return;
+        }
+        var u = (data && data.user) || {};
+        if (u.isConnected) {
+          renderConnected(u);
+        } else {
+          // Logged out (either manually via portal or session expired).
+          // Hide the card but keep polling so we re-appear on re-login.
+          removeCard();
+        }
+      })
+      .catch(function (e) {
+        // Silent on network hiccups so the overlay is not spammed with
+        // errors during roaming / captive-portal weirdness.
+        if (window.console && console.debug) console.debug("[SLIM] refresh failed:", e);
+      })
+      .finally(function () {
+        inFlight = false;
+      });
+  }
+
+  tick();
+  timer = setInterval(tick, REFRESH_MS);
+  document.addEventListener("visibilitychange", function () {
+    if (document.visibilityState === "visible") tick();
+  });
 })();

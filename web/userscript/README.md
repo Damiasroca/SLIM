@@ -61,12 +61,39 @@ Internet with the Tampermonkey extension.
 
 | State | What you see |
 | --- | --- |
-| On ship Wi-Fi, connected | Floating quota card, top-right |
+| On ship Wi-Fi, connected | Floating quota card, top-right, auto-refreshing |
 | Quota reached | Red "Quota reached" card with renewal countdown |
 | On portal page but not logged in yet | Nothing (silent) |
-| Off ship / no network | Nothing (silent, debug log only) |
+| Log out via the portal while the card is up | Card disappears; polling continues so it re-appears on re-login |
+| Off ship / no network | Nothing (silent, `console.debug` line) |
 
-Tap the `×` in the card corner to dismiss. Reload the page to re-check.
+The card includes an "Updated HH:MM:SS" timestamp in its footer so you
+can see it's alive.
+
+Tap the `×` in the corner to dismiss the card **and stop polling** for
+the rest of the page's life. Reload the page to restart.
+
+## Refresh interval
+
+Auto-refresh defaults to **every 2 minutes**. Each tick is one small
+POST to the portal; keep it modest so you don't burn quota on the
+overlay itself.
+
+To change it, edit this line near the top of
+[`slim-quota.user.js`](slim-quota.user.js):
+
+```js
+var REFRESH_MS = 120000;
+```
+
+- `60000`  — every minute
+- `120000` — every two minutes (default)
+- `300000` — every five minutes
+
+Save, bump `@version` if you want your manager to prompt for an update,
+and reload the portal page. When the tab is hidden the tick is skipped;
+when you come back to the tab it fetches immediately (`visibilitychange`
+handler).
 
 ## Editing / updating
 

@@ -190,12 +190,20 @@ You need a **userscript manager** first. One-time setup per browser:
 
 | State | What you see |
 | --- | --- |
-| On ship Wi-Fi, logged in | Floating quota card, top-right |
+| On ship Wi-Fi, logged in | Floating quota card, top-right, auto-refreshing every 2 min |
 | Quota reached | Red "Quota reached" card with renewal countdown |
 | Portal page but not logged in yet | Nothing (silent) |
+| Log out via the portal while the card is up | Card disappears; polling continues so it re-appears on re-login |
 | Off ship / no network | Nothing (silent; only a `console.debug` line) |
 
-Tap `×` to dismiss. Reload the page to refresh.
+The refresh interval is set at the top of `slim-quota.user.js`
+(`var REFRESH_MS = 120000;`). Change it to `60000` for every minute or
+`300000` for every five minutes. Ticks are skipped while the tab is
+hidden and re-run when it becomes visible again, so the overlay doesn't
+burn quota in the background.
+
+Tap `×` to dismiss the card and stop polling. Reload the page to
+restart.
 
 ---
 
