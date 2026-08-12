@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SLIM CORS Probe</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 1rem; background: #1a1a2e; color: #eaeaea; }
+    h1 { font-size: 1.1rem; }
+    button { margin: 0.25rem 0.5rem 0.25rem 0; padding: 0.5rem 0.75rem; }
+    pre { background: #16213e; padding: 0.75rem; overflow: auto; white-space: pre-wrap; font-size: 0.8rem; }
+    .ok { color: #4ade80; }
+    .fail { color: #f87171; }
+    label { display: block; margin: 0.5rem 0 0.25rem; }
+    input { width: min(100%, 280px); padding: 0.4rem; }
+  </style>
+</head>
+<body>
+  <h1>SLIM CORS Probe</h1>
+  <p>Run this on ship Wi-Fi. If <code>init</code> returns readable JSON, a web app is feasible.</p>
+  <label>Username (same as password)
+    <input id="user" type="text" autocomplete="username" />
+  </label>
+  <div>
+    <button id="btn-init">POST init</button>
+    <button id="btn-auth">POST authenticate</button>
+  </div>
+  <pre id="log">Ready.</pre>
+  <script>
+    const API = "https://internet.stenaline.com/portal_api.php";
+    const logEl = document.getElementById("log");
+
+    function log(msg, cls) {
+      const line = document.createElement("div");
+      if (cls) line.className = cls;
+      line.textContent = msg;
+      logEl.appendChild(line);
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    async function post(body) {
+      logEl.textContent = "";
+      log("POST " + API);
+      log("Body: " + body);
+      try {
+        const res = await fetch(API, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body,
+          credentials: "include",
+        });
+        log("HTTP " + res.status + " " + res.statusText, res.ok ? "ok" : "fail");
+        log("ACA-Origin: " + (res.headers.get("access-control-allow-origin") || "(none)"));
+        log("ACA-Credentials: " + (res.headers.get("access-control-allow-credentials") || "(none)"));
+        const text = await res.text();
+        log("Body (" + text.length + " chars):");
+        log(text.slice(0, 2000));
+        try {
+          JSON.parse(text);
+          log("JSON parse: OK — CORS allows reading the response.", "ok");
+        } catch (e) {
+          log("JSON parse failed: " + e, "fail");
+        }
+      } catch (e) {
+        log("FETCH FAILED (likely CORS or network): " + e, "fail");
+        log("If this fails, use the iOS Shortcut fallback in web/shortcut/.", "fail");
+      }
+    }
+
+    document.getElementById("btn-init").onclick = () =>
+      post("action=init&free_urls=");
+
+    document.getElementById("btn-auth").onclick = () => {
+      const u = document.getElementById("user").value.trim();
+      if (!u) { alert("Enter username"); return; }
+      const params = new URLSearchParams({
+        action: "authenticate",
+        switch_package: "true",
+        login: u,
+        password: u,
+        policy_accept: "true",
+        private_policy_accept: "false",
+        from_ajax: "true",
+        wispr_mode: "false",
+      });
+      post(params.toString());
+    };
+  </script>
+</body>
+</html>
